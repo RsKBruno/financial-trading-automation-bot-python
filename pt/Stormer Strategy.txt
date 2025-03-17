@@ -1,0 +1,220 @@
+// Copie e cole no TradingView, como uma nova estratégia no PineScript
+// Copy it e paste in TradingView, as a new strategy in PineScript
+// Created by Bruno Alves
+// Last Updated: 8th May, 2023.
+//@version=5
+strategy("Parabolic SAR Strategy", overlay=true, initial_capital = 10000)
+// ============= Inputs =============
+// ========Exit parameters =========
+i_exit_parameter = input.string(defval = 'Keltner', title = 'Exit Parameter', options = ['Keltner', 'Sar'], group = 'Choose your exit.')
+exit_conditional_keltner = i_exit_parameter == 'Keltner'
+exit_conditional_sar = i_exit_parameter == 'Sar'
+// ------------- RSI Inputs ---------------
+i_rsi_filter = input.bool(true, title='Use RSI filter?', group='RSI Filter')
+i_rsi_len = input.int(defval=14, title='RSI Length', group='RSI Filter')
+// ------------- EMA Inputs ------------
+i_ema_filter = input.bool(defval = true, group="MA Filter")
+i_len_ema = input.int(144, minval=1, title="Length EMA", group="MA Filter")
+i_src_ema = input(close, title="Source", group="MA Filter")
+i_offset_ema = input.int(title="Offset", defval=0, minval=-500, maxval=500, group="MA Filter")
+i_typeMA = input.string(title = "Method", defval = "SMA", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group="MA Filter")
+i_smoothingLength_ema = input.int(title = "Length", defval = 5, minval = 1, maxval = 100, group="MA Filter")
+// ------------- Sar Inputs ------------
+i_start = input(0.02, title = 'Sar Start', group = 'PARABOLIC SAR')
+i_increment = input(0.02, 'Sar Increment', group = 'PARABOLIC SAR')
+i_maximum = input(0.2, 'Sar Maximum', group = 'PARABOLIC SAR')
+// ------------- Time Filter Inputs ------------
+i_DateFilter = input.bool(false, title="Filter Date Range of Backtest",
+     group="Backtest Time Period")
+i_StartDate = input.time(timestamp("20 Dec 2022"), 
+     title="Start Date", group="Backtest Time Period",
+     tooltip="This start date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+i_EndDate = input.time(timestamp("20 Mar 2099"),
+     title="End Date", group="Backtest Time Period",
+     tooltip="This end date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+// ============Time Session for trading ======================
+i_timeSession = input.session(defval = '1800-0400',title = 'Choose your session', tooltip = 'Time Session to analyze', group = 'Time Session')
+// Padrao lindo encontrado no BITCOIN entre 18:00 ate 04:00
+// Padrao lindo encontrado no USDJPY entre 09:00 ate 15:00 usando o RSI
+i_allow_time_session = input.bool(defval = false, title='Do you want to use time session?', group = 'Time Session')
+i_timezone = input.string(defval = 'UTC+1', title = 'Choose the time zone where you live.', options = ['GMT-3', 'UTC+1'], group = 'Time Session', tooltip = 'UTC+1 = Ireland, Lodon | GMT-3 = Brazil')
+// ============= Just buy,sell or both =====================
+i_only_buy = input.bool(defval = true, title = 'Allow buy?', group = 'Buy and Sell?')
+i_only_sell = input.bool(defval = true, title = 'Allow sell?', group = 'Buy and Sell?')
+
+t = time(timeframe.period, i_timeSession, i_timezone)
+// ============= Functions | Indicators =============
+pine_atr(length) =>
+    trueRange = na(high[1])? high-low : math.max(math.max(high - low, math.abs(high - close[1])), math.abs(low - close[1]))
+    //true range can be also calculated with ta.tr(true)
+    ta.rma(trueRange, length)
+// ---------------- EMA Filter -------------
+ma(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+ema_filter = ta.ema(i_src_ema, i_len_ema)
+// ---------- RSI -------------
+rsi = ta.rsi(close, i_rsi_len)
+
+var bool uptrend = na
+var float EP = na
+var float SAR = na
+var float AF = i_start
+var float nextBarSAR = na
+// My modifications
+var float Stophigh = 0.0
+var float Stoplow = 0.0
+current_high = request.security(syminfo.tickerid, timeframe.period, high)
+current_low = request.security(syminfo.tickerid, timeframe.period, low)
+// ============ Conditionals ============
+// ----------- Time Backtesting Conditional -------------
+inTradeWindow = i_DateFilter == false or (time >= i_StartDate and time < i_EndDate)
+rsi_filter_buy = i_rsi_filter == false or (rsi > 50)
+rsi_filter_sell = i_rsi_filter == false or (rsi < 50)
+inSessiontoTrade = i_allow_time_session == false or (time == t)
+buy_ema_filter = i_ema_filter == false or (low > ema_filter)
+sell_ema_filter = i_ema_filter == false or (high < ema_filter)
+// -------------- Ema ---------------------
+smoothingLine = ma(ema_filter, i_smoothingLength_ema, i_typeMA)
+// ----------------
+// =================== BANDAS DE KELTNER ====================
+i_length_keltner = input.int(5, minval=1, group = 'Keltner features')
+i_mult_keltner = input(0.1, "Multiplier", group = 'Keltner features')
+i_src_kelter = input(close, title="Source", group = 'Keltner features')
+i_exp_keltner = input(true, "Use Exponential MA", group = 'Keltner features')
+BandsStyle = input.string("Average True Range", options = ["Average True Range", "True Range", "Range"], title="Bands Style", group = 'Keltner features')
+atrlength = input(10, "ATR Length", group = 'Keltner features')
+esma(source, i_length_keltner)=>
+	s = ta.sma(source, i_length_keltner)
+	e = ta.ema(source, i_length_keltner)
+	i_exp_keltner ? e : s
+ma = esma(i_src_kelter, i_length_keltner)
+rangema = BandsStyle == "True Range" ? ta.tr(true) : BandsStyle == "Average True Range" ? ta.atr(atrlength) : ta.rma(high - low, i_length_keltner)
+upper_keltner = ma + rangema * i_mult_keltner
+lower_keltner = ma - rangema * i_mult_keltner
+u = plot(upper_keltner, color=#c0be33, title="Upper")
+plot(ma, color=#c0be33, title="Basis")
+l = plot(lower_keltner, color=#c0be33, title="Lower")
+fill(u, l, color=color.rgb(33, 150, 243, 95), title="Background")
+//===================== FIM BANDAS DE KELTNER ==============
+// USANDO DMI/ADX COMO TENTATIVA DE MELHORA NA ESTRATEGIA
+i_use_adxfilter = input.bool(defval = false, title = 'Do you want ADX?', group = 'ADX Settings')
+i_len_adx = input.int(17, minval=1, title="DI Length", group = 'ADX Settings')
+i_lensig = input.int(14, title="ADX Smoothing", minval=1, maxval=50, group = 'ADX Settings')
+i_weak_adx = input.float(defval = 25.0, title = 'Weak ADX', minval = 1.0, maxval = 50.0, group = 'ADX Settings')
+[diplus, diminus, adx] = ta.dmi(i_len_adx, i_lensig)
+// plot(adx, color=color.red, title="ADX", display = display.pane)
+// plot(diplus, color=color.blue, title="+DI", display = display.pane)
+// plot(diminus, color=color.rgb(236, 240, 255), title="-DI", display = display.pane)
+     //Buy/Sell conditional para adx
+bool weak_adx = i_use_adxfilter == false or (adx > i_weak_adx)
+//========================================================
+if bar_index > 0
+	firstTrendBar = false
+	SAR := nextBarSAR
+	if bar_index == 1
+		float prevSAR = na
+		float prevEP = na
+		lowPrev = low[1]
+		highPrev = high[1]
+		closeCur = close
+		closePrev = close[1]
+		if closeCur > closePrev
+			uptrend := true
+			EP := high
+			prevSAR := lowPrev
+			prevEP := high
+		else
+			uptrend := false
+			EP := low
+			prevSAR := highPrev
+			prevEP := low
+		firstTrendBar := true
+		SAR := prevSAR + i_start * (prevEP - prevSAR)
+	if uptrend
+		if SAR > low
+			firstTrendBar := true
+			uptrend := false
+			SAR := math.max(EP, high)
+			EP := low
+			AF := i_start
+	else
+		if SAR < high
+			firstTrendBar := true
+			uptrend := true
+			SAR := math.min(EP, low)
+			EP := high
+			AF := i_start
+	if not firstTrendBar
+		if uptrend
+			if high > EP
+				EP := high
+				AF := math.min(AF + i_increment, i_maximum)
+		else
+			if low < EP
+				EP := low
+				AF := math.min(AF + i_increment, i_maximum)
+	if uptrend
+		SAR := math.min(SAR, low[1])
+		if bar_index > 1
+			SAR := math.min(SAR, low[2])
+	else
+		SAR := math.max(SAR, high[1])
+		if bar_index > 1
+			SAR := math.max(SAR, high[2])
+	nextBarSAR := SAR + AF * (EP - SAR)
+	if barstate.isconfirmed
+		if firstTrendBar and inTradeWindow
+			if strategy.position_size > 0 and exit_conditional_sar
+				strategy.close("SarBUY", comment = 'Inversao do Sar', alert_message = 'CloseOpenSAR_BUY')
+			if strategy.position_size < 0 and exit_conditional_sar
+				strategy.close("SarSELL", comment = 'Inversao do Sar', alert_message = 'CloseOpenSAR_SELL')
+			if not uptrend and strategy.position_size == 0 and weak_adx
+				if sell_ema_filter and rsi_filter_sell and i_only_sell and inSessiontoTrade
+					Stophigh := current_high
+					Stoplow := current_low
+					strategy.entry("SarSELL", strategy.short, comment="SarSELL")
+					// strategy.entry("SarSELL", strategy.short, comment="SarSELL", qty = 2) > Parcial
+			if uptrend and strategy.position_size == 0 and weak_adx		
+				if buy_ema_filter  and rsi_filter_buy and i_only_buy and inSessiontoTrade
+					Stophigh := current_high
+					Stoplow := current_low
+					strategy.entry("SarBUY", strategy.long, comment="SarBUY")
+					// strategy.entry("SarBUY", strategy.long, comment="SarBUY", qty = 2)
+// var int counter = 0
+
+// if strategy.position_size > 0 or strategy.position_size < 0
+// 	counter := counter + 1
+if strategy.position_size > 0 and close < lower_keltner and exit_conditional_keltner
+	strategy.close("SarBUY", comment = 'Fechamento por Keltner', alert_message = 'Close_BUY', immediately = true)
+	//counter := 0
+if strategy.position_size < 0 and close > upper_keltner and exit_conditional_keltner
+	strategy.close("SarSELL", comment = 'Fechamento por Keltner', alert_message = 'Close_SELL', immediately = true)
+	// counter := 0
+stopvenda_ATR = Stophigh + (pine_atr(14) * 0.2) 
+stopcompra_ATR = Stoplow - (pine_atr(14) * 0.2) 
+alvoParcial_buy = Stophigh + (pine_atr(5) * 1)
+alvoParcial_sell = Stoplow - (pine_atr(5) * 1)
+teste_kelter = (strategy.position_size > 0 and close < lower_keltner) or (strategy.position_size < 0 and close > upper_keltner)
+strategy.exit("StopVenda", "SarSELL", stop = stopvenda_ATR, comment_loss = 'StopLoss')
+strategy.exit("StopCompra", "SarBUY", stop = stopcompra_ATR, comment_loss = 'StopLoss')
+//strategy.exit("StopVenda", "SarSELL", stop = stopvenda_ATR, limit = alvoParcial_sell, qty = teste_kelter ? 2 : 1, comment_loss = 'StopLoss', comment_profit = 'Parcial_SELL' )
+//strategy.exit("StopCompra", "SarBUY", stop = stopcompra_ATR, limit = alvoParcial_buy, qty = teste_kelter ? 2 : 1, comment_loss = 'StopLoss', comment_profit = 'Parcial_BUY')
+
+plot(SAR, style=plot.style_cross, linewidth=3, color=color.orange)
+plot(nextBarSAR, style=plot.style_cross, linewidth=3, color=color.rgb(109, 73, 102))
+plot(ema_filter, title="EMA", color=color.blue, offset=i_offset_ema)
+plot(smoothingLine, title="Smoothing Line", color=#f37f20, offset=i_offset_ema, display=display.none)
+bgcolor(i_allow_time_session? (time == t ? color.rgb(41, 134, 119, 90) : na) : na)
+// Setups winners
+// 1:
+// RSI filter off 
+// ADX ON with parameters DI 9, ADX 12, WEAK ADX 25

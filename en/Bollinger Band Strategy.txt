@@ -1,0 +1,128 @@
+// Copie e cole no TradingView, como uma nova estratégia no PineScript
+// Copy it e paste in TradingView, as a new strategy in PineScript
+// Created by Bruno Alves
+// Last Updated: 8th May, 2023.
+//@version=5
+strategy("Logan Bollinger Bands", overlay=true, initial_capital = 100000, default_qty_type = strategy.percent_of_equity, default_qty_value = 100)
+// ========== FILTRO DE TEMPO =====================
+// STEP 1. Create inputs that configure the backtest's date range
+useDateFilter = input.bool(false, title="Filter Date Range of Backtest",
+     group="Backtest Time Period")
+backtestStartDate = input.time(timestamp("20 May 2023"), 
+     title="Start Date", group="Backtest Time Period",
+     tooltip="This start date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+backtestEndDate = input.time(timestamp("20 Mar 2099"),
+     title="End Date", group="Backtest Time Period",
+     tooltip="This end date is in the time zone of the exchange " + 
+     "where the chart's instrument trades. It doesn't use the time " + 
+     "zone of the chart or of your computer.")
+
+inTradeWindow = useDateFilter == false or (time >= backtestStartDate and
+     time < backtestEndDate)
+// -------------- Just buy or sell -----------------------
+i_only_buy = input.bool(defval = true, title = 'Allow buy?', group = 'Buy and Sell?')
+i_only_sell = input.bool(defval = true, title = 'Allow sell?', group = 'Buy and Sell?')
+// ---------------- EMA Filter Trend ----------------
+i_emaFilter = input.bool(false, title="Filter of Trend EMA")
+i_length_emaFilter = input.int(defval = 200, title = 'EMA Filter', minval = 1)
+ema_filter = ta.ema(close, i_length_emaFilter)
+usingFilterEMA_BUY = i_emaFilter == false or (close > ema_filter)
+usingFilterEMA_SELL = i_emaFilter == false or (close < ema_filter)
+// EMA 9
+i_length_ema_TP = input.int(defval = 14, title = 'TP based on EMA', minval = 1, group = 'Take Profit EMA')
+//---------- Bollinger -----------
+length = input.int(defval=14, title = 'Central Line', minval=1, group='Bollinger Settings')
+src = input(close, title="Source", group='Bollinger Settings')
+mult = input.float(defval=2.2, title="Deviation",minval=0.001, maxval=50, group='Bollinger Settings')
+basis = ta.sma(src, length)
+dev = mult * ta.stdev(src, length)
+upper_band = basis + dev
+lower_band = basis - dev
+offset = input.int(0, "Offset", minval = -500, maxval = 500)
+//plot(basis, "Basis", color=#FF6D00, offset = offset)
+p1 = plot(upper_band, "Upper", color=#d5d820, offset = offset)
+p2 = plot(lower_band, "Lower", color=#d5d820, offset = offset)
+fill(p1, p2, title = "Background", color=color.rgb(33, 150, 243, 95))
+// USANDO DMI/ADX COMO TENTATIVA DE MELHORA NA ESTRATEGIA
+i_use_adxfilter = input.bool(defval = true, title = 'Do you want ADX?', group = 'ADX Settings')
+i_len_adx = input.int(17, minval=1, title="DI Length", group = 'ADX Settings')
+i_lensig = input.int(14, title="ADX Smoothing", minval=1, maxval=50, group = 'ADX Settings')
+i_weak_adx = input.float(defval = 20.0, title = 'Weak ADX', minval = 1.0, maxval = 50.0, group = 'ADX Settings')
+[diplus, diminus, adx] = ta.dmi(i_len_adx, i_lensig)
+// plot(adx, color=color.red, title="ADX", display = display.pane)
+// plot(diplus, color=color.blue, title="+DI", display = display.pane)
+// plot(diminus, color=color.rgb(236, 240, 255), title="-DI", display = display.pane)
+     //Buy/Sell conditional para adx
+bool weak_adx = i_use_adxfilter == false or (adx < i_weak_adx)
+//========================================================
+// ----------- EMA 9 ------------
+ema_TP = ta.ema(close, i_length_ema_TP)
+p3 = plot(ema_TP, "EMA_TP", color=#27a0be, offset = offset)
+p4 = plot(ema_filter, 'EMA Filter', color=#0016dd, offset = offset, linewidth = 2)
+// ----------- ATR --------------
+pine_atr(length) =>
+    trueRange = na(high[1])? high-low : math.max(math.max(high - low, math.abs(high - close[1])), math.abs(low - close[1]))
+    //true range can be also calculated with ta.tr(true)
+    ta.rma(trueRange, length)
+i_atr_multiplier = input.float(defval=1.3, title='ATR Multiplier', minval = 0.1, maxval = 5.0, tooltip = 'Set the ATR multiplier to define your stop', group='ATR StopLoss')
+i_atr_value = input.int(defval = 14, title = 'ATR Value', minval = 1, maxval = 50, group='ATR StopLoss')
+
+//==============================
+var float Stophigh = 0.0
+var float Stoplow = 0.0
+var float tp_long = ema_TP
+var float tp_short = ema_TP
+var float stopBUY = 0.0
+var float stopSELL = 0.0
+
+float atr_value = pine_atr(i_atr_value)
+current_high = request.security(syminfo.tickerid, timeframe.period, high)
+current_low = request.security(syminfo.tickerid, timeframe.period, low)
+current_close = request.security(syminfo.tickerid, timeframe.period, close)
+// -------- Conditionals ------
+sell_conditional = current_close > upper_band and strategy.position_size == 0 and weak_adx
+buy_conditional = current_close < lower_band and strategy.position_size == 0 and weak_adx
+tp_buy_conditional = strategy.position_size > 0 and current_high >= ema_TP 
+tp_sell_conditional = strategy.position_size < 0 and current_low <= ema_TP 
+
+//==============================
+var int teste_venda = ta.barssince(sell_conditional)
+var int teste_compra = ta.barssince(buy_conditional)
+
+// ----- Entrada da estrategia -----
+if buy_conditional and usingFilterEMA_BUY and inTradeWindow and i_only_buy
+    Stophigh := current_high
+    Stoplow := current_low
+    stopBUY := Stoplow - (atr_value * i_atr_multiplier)
+    strategy.entry("bbBUY", strategy.long, comment="bbBUY")
+if sell_conditional and usingFilterEMA_SELL and inTradeWindow and i_only_sell
+    Stophigh := current_high
+    Stoplow := current_low
+    stopSELL := Stophigh + (atr_value * i_atr_multiplier)
+    strategy.entry("bbSELL", strategy.short, comment="bbSELL")
+
+// ----- TP da estrategia -----
+// if tp_buy_conditional
+// 	strategy.close("bbBUY", comment = 'TP EMA BUY', alert_message = 'TP EMA BUY', immediately = true)
+// if tp_sell_conditional
+// 	strategy.close("bbSELL", comment = 'TP EMA SELL', alert_message = 'TP EMA SELL', immediately = true)
+//longSL := if inLong and ta.barssince(longClose) < ta.barssince(longCondition)
+// strategy.exit("StopVenda", "bbSELL", limit = ema_TP, stop = Stophigh + (atr_value * 1.3), comment_profit = 'TP', comment_loss = 'Loss')
+// strategy.exit("StopCompra", "bbBUY", limit = ema_TP, stop = Stoplow - (atr_value * 1.3), comment_profit = ' TP', comment_loss = 'Loss')
+
+strategy.exit("StopVenda", "bbSELL", limit = ema_TP, stop = stopSELL, comment_loss = 'Loss', comment_profit = 'TP')
+strategy.exit("StopCompra", "bbBUY", limit = ema_TP, stop = stopBUY, comment_loss = 'Loss', comment_profit = 'TP')
+
+// plot(stopBUY, 'Stop Line', color.red, offset = offset, style = plot.style_steplinebr)
+// plot(stopSELL, 'Stop Line', color.green, offset = offset, style = plot.style_steplinebr)
+
+
+//SETUP CAMEpeAO AUDZND 30 MINUTOS
+// ADX 17 14 14
+// SETUP CAMPEAO EURGBP
+//ema 144, ADX 17 14 20, DESVIO PADRAO 2
+// AUDCHF no filter ema, desvio padrao 2, ADX 17, 14, 12
+
+// CADCHF EMA 144 Desvio padrao 2.2

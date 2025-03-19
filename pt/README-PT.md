@@ -17,8 +17,15 @@ O robô atua como uma **ponte inteligente** entre essas tecnologias:
 3. **Executa ordens no MT5** automaticamente, reduzindo erros manuais e garantindo velocidade de resposta.  
 4. **Gerencia riscos**: Fecha posições via stop loss ou reversões de tendência.  
 
----
+```mermaid
+graph LR
+A[TradingView] -->|Webhook| B(Servidor Flask)
+B --> C{Decisão}
+C -->|Sinal de abertura| D[Abre Ordem no MT5]
+C -->|Sinal de fechamento| E[Fecha Ordem no MT5]
+```
 
+---
 ## 🛠️ Pré-requisitos  
 1. **MetaTrader 5**: Instalado e configurado.  
 2. **Python 3.8+**: Com bibliotecas:  

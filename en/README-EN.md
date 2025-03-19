@@ -17,8 +17,14 @@ The robot serves as an **intelligent bridge** between these technologies:
 3. **Executes orders on MT5** automatically, reducing manual errors and ensuring rapid response.  
 4. **Manages risks**: Closes positions via stop loss or trend reversals.  
 
+```mermaid
+graph LR
+A[TradingView] -->|Webhook| B(Flask Server)
+B --> C{Decision}
+C -->|Open signal| D[Open Order in MT5]
+C -->|Close signal| E[Close Order in MT5]
+```
 ---  
-
 ## 🛠️ Prerequisites  
 1. **MetaTrader 5**: Installed and configured.  
 2. **Python 3.8+**: With libraries:  
